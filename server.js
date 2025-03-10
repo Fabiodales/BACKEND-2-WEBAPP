@@ -9,23 +9,36 @@ import { Configuration, OpenAIApi } from 'openai';
 
 const app = express();
 
-// ✅ Configurazione CORS per evitare problemi con il frontend
 app.use(cors({
   origin: process.env.ALLOWED_ORIGIN || '*'
 }));
 
 app.use(express.json());
 
-// ✅ Configurazione OpenAI GPT-3.5 Turbo
-const configuration = new Configuration({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+// ✅ FIX: Configurazione API Key pulita senza spazi
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY?.trim();
+const DEEPL_API_KEY = process.env.DEEPL_API_KEY?.trim();
+
+const configuration = new Configuration({ apiKey: OPENAI_API_KEY });
 const openai = new OpenAIApi(configuration);
+
+// ✅ FIX: Funzione per estrarre l'ID del video da un URL YouTube
+function extractVideoId(url) {
+  const regex = /(?:youtube\.com\/.*v=|youtu\.be\/)([^&?/]+)/;
+  const match = url.match(regex);
+  return match ? match[1] : null;
+}
 
 // ✅ Endpoint per ottenere il transcript di un video YouTube
 app.get('/api/transcript/:videoId', async (req, res) => {
   try {
-    const transcript = await YoutubeTranscript.fetchTranscript(req.params.videoId);
+    const videoId = req.params.videoId;
+
+    if (!videoId) {
+      return res.status(400).json({ success: false, error: "Invalid YouTube video URL." });
+    }
+
+    const transcript = await YoutubeTranscript.fetchTranscript(videoId);
     res.json({ success: true, transcript });
   } catch (error) {
     console.error("❌ Errore nel transcript:", error.message);
@@ -33,10 +46,11 @@ app.get('/api/transcript/:videoId', async (req, res) => {
   }
 });
 
-// ✅ Endpoint per rilevare la lingua del testo con OpenAI
+// ✅ Endpoint per rilevare la lingua
 app.post('/api/detect-language', async (req, res) => {
   try {
     const { text } = req.body;
+    if (!text) return res.status(400).json({ success: false, error: "Missing text input." });
 
     const response = await openai.createChatCompletion({
       model: "gpt-3.5-turbo",
@@ -59,24 +73,25 @@ app.post('/api/detect-language', async (req, res) => {
 // ✅ Endpoint per tradurre il testo con DeepL
 app.post('/api/translate', async (req, res) => {
   try {
-    if (!process.env.DEEPL_API_KEY) {
-      throw new Error("⚠️ Missing DeepL API Key. Check your environment variables.");
+    if (!DEEPL_API_KEY) {
+      return res.status(500).json({ success: false, error: "Missing DeepL API Key." });
     }
 
-    const languageMap = { english: 'EN', italian: 'IT', spanish: 'ES', french: 'FR', german: 'DE', portuguese: 'PT' };
     const { text, targetLanguage } = req.body;
+    if (!text || !targetLanguage) {
+      return res.status(400).json({ success: false, error: "Missing text or targetLanguage." });
+    }
 
-    const deepLApiKey = process.env.DEEPL_API_KEY.trim(); // 🔹 FIX per errori nel token
-
-    const response = await axios.post('https://api-free.deepl.com/v2/translate', {
-      text: [text],
-      target_lang: languageMap[targetLanguage] || 'EN'
-    }, {
-      headers: { 
-        'Authorization': `DeepL-Auth-Key ${deepLApiKey}`,
-        'Content-Type': 'application/json'
+    const response = await axios.post(
+      'https://api-free.deepl.com/v2/translate',
+      { text: [text], target_lang: targetLanguage.toUpperCase() },
+      {
+        headers: {
+          'Authorization': `DeepL-Auth-Key ${DEEPL_API_KEY}`,
+          'Content-Type': 'application/json'
+        }
       }
-    });
+    );
 
     res.json({ success: true, translation: response.data.translations[0].text });
   } catch (error) {
@@ -85,13 +100,17 @@ app.post('/api/translate', async (req, res) => {
   }
 });
 
-// ✅ Endpoint per generare un riassunto e una mappa concettuale con GPT-3.5 Turbo
+// ✅ Endpoint per generare il riassunto e la mappa concettuale
 app.post('/api/summarize', async (req, res) => {
   try {
     const { transcript, language, length } = req.body;
+    if (!transcript || !language || !length) {
+      return res.status(400).json({ success: false, error: "Missing parameters." });
+    }
+
     const fullText = transcript.map(item => item.text).join(' ');
 
-    // 🎯 Prompt per il riassunto
+    // ✅ FIX: Richiesta OpenAI con API Key pulita
     const summaryResponse = await openai.createChatCompletion({
       model: "gpt-3.5-turbo",
       messages: [
@@ -104,7 +123,7 @@ app.post('/api/summarize', async (req, res) => {
 
     const summary = summaryResponse.data.choices[0].message.content.trim();
 
-    // 🎯 Prompt per la mappa concettuale
+    // ✅ FIX: Mappa concettuale senza errori
     const conceptMapResponse = await openai.createChatCompletion({
       model: "gpt-3.5-turbo",
       messages: [
@@ -140,6 +159,6 @@ app.post('/api/summarize', async (req, res) => {
   }
 });
 
-// ✅ Avvia il server
+// ✅ Avvio del server
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
