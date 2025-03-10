@@ -49,16 +49,25 @@ app.post('/api/detect-language', async (req, res) => {
   }
 });
 
-// 🌐 **Traduzione con DeepL**
+// Traduzione con DeepL
 app.post('/api/translate', async (req, res) => {
   try {
     const languageMap = { english: 'EN', italian: 'IT', spanish: 'ES', french: 'FR', german: 'DE', portuguese: 'PT' };
     const { text, targetLanguage } = req.body;
+
+    // Controllo variabile d'ambiente
+    if (!process.env.DEEPL_API_KEY) {
+      throw new Error("⚠️ Missing DeepL API Key. Check your environment variables.");
+    }
+
     const response = await axios.post('https://api-free.deepl.com/v2/translate', {
       text: [text],
       target_lang: languageMap[targetLanguage] || 'EN'
     }, {
-      headers: { 'Authorization': `DeepL-Auth-Key ${process.env.DEEPL_API_KEY}` }
+      headers: { 
+        'Authorization': `DeepL-Auth-Key ${process.env.DEEPL_API_KEY.trim()}`, // Rimuove spazi extra
+        'Content-Type': 'application/json'
+      }
     });
 
     res.json({ success: true, translation: response.data.translations[0].text });
