@@ -9,20 +9,23 @@ import { Configuration, OpenAIApi } from 'openai';
 
 const app = express();
 
+// ✅ FIX: CORS Configurato correttamente
 app.use(cors({
-  origin: process.env.ALLOWED_ORIGIN || '*'
+  origin: '*',
+  methods: ['GET', 'POST'],
+  allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
 app.use(express.json());
 
-// ✅ FIX: Configurazione API Key pulita senza spazi
+// ✅ FIX: Pulizia API Key per evitare errori di autorizzazione
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY?.trim();
 const DEEPL_API_KEY = process.env.DEEPL_API_KEY?.trim();
 
 const configuration = new Configuration({ apiKey: OPENAI_API_KEY });
 const openai = new OpenAIApi(configuration);
 
-// ✅ FIX: Funzione per estrarre l'ID del video da un URL YouTube
+// ✅ Funzione per estrarre l'ID del video da URL YouTube
 function extractVideoId(url) {
   const regex = /(?:youtube\.com\/.*v=|youtu\.be\/)([^&?/]+)/;
   const match = url.match(regex);
@@ -35,10 +38,15 @@ app.get('/api/transcript/:videoId', async (req, res) => {
     const videoId = req.params.videoId;
 
     if (!videoId) {
-      return res.status(400).json({ success: false, error: "Invalid YouTube video URL." });
+      return res.status(400).json({ success: false, error: "Invalid YouTube video ID." });
     }
 
     const transcript = await YoutubeTranscript.fetchTranscript(videoId);
+
+    if (!transcript || transcript.length === 0) {
+      return res.status(404).json({ success: false, error: "No transcript available for this video." });
+    }
+
     res.json({ success: true, transcript });
   } catch (error) {
     console.error("❌ Errore nel transcript:", error.message);
@@ -50,6 +58,7 @@ app.get('/api/transcript/:videoId', async (req, res) => {
 app.post('/api/detect-language', async (req, res) => {
   try {
     const { text } = req.body;
+
     if (!text) return res.status(400).json({ success: false, error: "Missing text input." });
 
     const response = await openai.createChatCompletion({
@@ -104,6 +113,7 @@ app.post('/api/translate', async (req, res) => {
 app.post('/api/summarize', async (req, res) => {
   try {
     const { transcript, language, length } = req.body;
+
     if (!transcript || !language || !length) {
       return res.status(400).json({ success: false, error: "Missing parameters." });
     }
