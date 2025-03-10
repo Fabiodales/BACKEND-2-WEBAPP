@@ -15,10 +15,9 @@ app.use(cors({
   methods: ['GET', 'POST'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
-
 app.use(express.json());
 
-// Variabili d'ambiente
+// Carica chiavi
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY?.trim();
 const DEEPL_API_KEY = process.env.DEEPL_API_KEY?.trim();
 const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY?.trim();
@@ -30,7 +29,7 @@ const openai = new OpenAIApi(configuration);
 
 /**
  * Endpoint: /api/video-info/:videoId
- * Restituisce info sul video (title, thumbnail, durata, ecc.) e info sul canale (nome, iscritti, ecc.)
+ * - Restituisce info sul video (title, thumbnail, durata, ecc.) e sul canale (nome, iscritti, ecc.)
  */
 app.get('/api/video-info/:videoId', async (req, res) => {
   try {
@@ -96,7 +95,7 @@ app.get('/api/video-info/:videoId', async (req, res) => {
 
 /**
  * Endpoint: /api/transcript/:videoId
- * Restituisce il transcript del video
+ * - Restituisce il transcript del video
  */
 app.get('/api/transcript/:videoId', async (req, res) => {
   try {
@@ -120,7 +119,7 @@ app.get('/api/transcript/:videoId', async (req, res) => {
 /**
  * Endpoint: /api/detect-language
  * Body: { text }
- * Rileva la lingua (ISO code) tramite OpenAI
+ * - Rileva la lingua (ISO code) tramite OpenAI
  */
 app.post('/api/detect-language', async (req, res) => {
   try {
@@ -132,8 +131,14 @@ app.post('/api/detect-language', async (req, res) => {
     const response = await openai.createChatCompletion({
       model: "gpt-3.5-turbo",
       messages: [
-        { role: "system", content: "Detect the language and return only the ISO code (e.g., 'en', 'it', 'es')." },
-        { role: "user", content: text.substring(0, 300) }
+        {
+          role: "system",
+          content: "Detect the language and return only the ISO code (e.g., 'en', 'it', 'es')."
+        },
+        {
+          role: "user",
+          content: text.substring(0, 300)
+        }
       ],
       max_tokens: 5,
       temperature: 0
@@ -150,7 +155,7 @@ app.post('/api/detect-language', async (req, res) => {
 /**
  * Endpoint: /api/translate
  * Body: { text, targetLanguage } -> "IT", "EN", ecc.
- * Usa DeepL
+ * - Usa DeepL
  */
 app.post('/api/translate', async (req, res) => {
   try {
@@ -184,26 +189,26 @@ app.post('/api/translate', async (req, res) => {
 
 /**
  * Endpoint: /api/summarize
- * Body: { transcript, language, length }
- * Ritorna: { success, summary, conceptMap }
+ * Body: { transcript, language }
+ * - Restituisce un riassunto con heading (h2,h3) e emoji
  */
 app.post('/api/summarize', async (req, res) => {
   try {
-    const { transcript, language, length } = req.body;
-    if (!transcript || !language || !length) {
+    const { transcript, language } = req.body;
+    if (!transcript || !language) {
       return res.status(400).json({ success: false, error: "Missing parameters." });
     }
 
     // Unisci il testo
     const fullText = transcript.map(item => item.text).join(' ');
 
-    // 1) Prompt per un riassunto dettagliato con heading ed emoji
+    // Prompt per un riassunto dettagliato con headings ed emoji
     const summaryPrompt = [
       {
         role: "system",
-        content: `You are an advanced summarization assistant. The user wants a well-structured summary in ${language}. 
-Use headings (h1,h2,h3,h4,h5,h6) and emojis to highlight key concepts. 
-Produce a thorough and fairly long summary with relevant details.`
+        content: `You are an advanced summarization assistant. The user wants a well-structured summary in ${language}.
+Use headings (h2, h3, etc.) and emojis to highlight key concepts. 
+Produce a thorough summary with relevant details, properly indented, but not extremely long.`
       },
       {
         role: "user",
@@ -212,72 +217,21 @@ Produce a thorough and fairly long summary with relevant details.`
 - Use emojis for key concepts
 - Be detailed, do not be extremely short
 - Language: ${language}
-- length: ${length} (short, medium, long)
 `
       }
     ];
 
-    const maxTokens = length === "long" ? 1200 : (length === "medium" ? 800 : 500);
     const summaryResponse = await openai.createChatCompletion({
       model: "gpt-3.5-turbo",
       messages: summaryPrompt,
-      max_tokens: maxTokens,
+      max_tokens: 800,
       temperature: 0.5
     });
 
     const summary = summaryResponse.data.choices[0].message.content.trim();
 
-    // 2) Prompt per generare una mappa concettuale in formato flowchart
-    const conceptMapPrompt = [
-      {
-        role: "system",
-        content: `You are a concept map generator. Based on the summary, produce a JSON flowchart with "nodes" and "edges". 
-Each node has an "id" and a "label". 
-Include emojis in labels if relevant. 
-The output must be valid JSON of the form:
-{
-  "nodes": [
-    { "id": "1", "label": "Main Topic" },
-    ...
-  ],
-  "edges": [
-    { "source": "1", "target": "2" },
-    ...
-  ]
-}`
-      },
-      {
-        role: "user",
-        content: summary
-      }
-    ];
-
-    const conceptMapResponse = await openai.createChatCompletion({
-      model: "gpt-3.5-turbo",
-      messages: conceptMapPrompt,
-      max_tokens: 1200,
-      temperature: 0.3
-    });
-
-    let conceptMap;
-    try {
-      conceptMap = JSON.parse(conceptMapResponse.data.choices[0].message.content.trim());
-    } catch (err) {
-      console.error("⚠️ Error parsing concept map, fallback used.");
-      conceptMap = {
-        nodes: [
-          { id: "root", label: "Main Topic" },
-          { id: "1", label: "Subtopic 1" },
-          { id: "2", label: "Subtopic 2" }
-        ],
-        edges: [
-          { source: "root", target: "1" },
-          { source: "root", target: "2" }
-        ]
-      };
-    }
-
-    res.json({ success: true, summary, conceptMap });
+    // Restituisci solo il riassunto (niente flowchart)
+    res.json({ success: true, summary });
   } catch (error) {
     console.error("❌ /api/summarize Error:", error.message);
     res.status(500).json({ success: false, error: error.message });
